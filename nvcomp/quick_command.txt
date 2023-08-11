@@ -1,0 +1,9 @@
+numpyfromfile
+
+sinfo
+
+srun -p GPU-shared --gpus-per-node 1 --pty bash
+
+xxd -b $PROJECT/Compressor/data/cesm-CLDHGH-3600x1800
+
+./benchmark_bitcomp_chunked -f $PROJECT/Compressor/data/cesm-CLDHGH-3600x1800
