@@ -147,7 +147,7 @@ def read_data_from_bin(filepath, read_dtype = torch.float32, output_dtype = torc
         ts = ts.to(output_dtype)
     return ts
 
-def main():
+def main_test():
     abspath = '/ocean/projects/asc200010p/jjia1/Compressor/data/'
     files = ['cesm-CLDHGH-3600x1800', 'exafel-59200x388', 'hurr-CLOUDf48-500x500x100']
     data_descs = ['3600*1800', '59200*388', '400*500*100']
@@ -241,5 +241,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main_test()
 
