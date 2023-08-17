@@ -176,3 +176,6 @@ class TestFloatCodec(unittest.TestCase):
                     )
 
                     assert torch.equal(t, decomp_t)
+
+print('start float test')
+unittest.main()

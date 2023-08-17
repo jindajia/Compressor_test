@@ -173,7 +173,7 @@ for dt in [torch.bfloat16, torch.float16, torch.float32]:
 
     c, dc, total_size, comp_size = get_float_comp_timings(ts)
     ratio = comp_size / total_size
-    bw = (total_size / 1e9) / (c * 1e-3)
+    c_bw = (total_size / 1e9) / (c * 1e-3)
     dc_bw = (total_size / 1e9) / (dc * 1e-3)
 
     print("Float codec batched perf [128, [512 * 1024]] {}".format(dt))
