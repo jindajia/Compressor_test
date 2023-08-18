@@ -154,7 +154,7 @@ for dt in [torch.bfloat16, torch.float16, torch.float32]:
     ts.append(torch.normal(0, 1.0, [128 * 512 * 1024], dtype=dt, device=dev))
 
     c, dc, total_size, comp_size = get_float_comp_timings(ts)
-    ratio = comp_size / total_size
+    ratio = total_size / comp_size
     c_bw = (total_size / 1e9) / (c * 1e-3)
     dc_bw = (total_size / 1e9) / (dc * 1e-3)
 
@@ -172,7 +172,7 @@ for dt in [torch.bfloat16, torch.float16, torch.float32]:
         ts.append(torch.normal(0, 1.0, [512 * 1024], dtype=dt, device=dev))
 
     c, dc, total_size, comp_size = get_float_comp_timings(ts)
-    ratio = comp_size / total_size
+    ratio = total_size / comp_size
     c_bw = (total_size / 1e9) / (c * 1e-3)
     dc_bw = (total_size / 1e9) / (dc * 1e-3)
 
@@ -192,7 +192,7 @@ for dt in [torch.bfloat16, torch.float16, torch.float32]:
     ts.append(torch.normal(0, 1.0, [128 * 512 * 1024], dtype=dt, device=dev))
 
     c, dc, total_size, comp_size = get_any_comp_timings(ts)
-    ratio = comp_size / total_size
+    ratio = total_size / comp_size
     c_bw = (total_size / 1e9) / (c * 1e-3)
     dc_bw = (total_size / 1e9) / (dc * 1e-3)
 
@@ -210,7 +210,7 @@ for dt in [torch.bfloat16, torch.float16, torch.float32]:
         ts.append(torch.normal(0, 1.0, [512 * 1024], dtype=dt, device=dev))
 
     c, dc, total_size, comp_size = get_any_comp_timings(ts)
-    ratio = comp_size / total_size
+    ratio = total_size / comp_size
     c_bw = (total_size / 1e9) / (c * 1e-3)
     dc_bw = (total_size / 1e9) / (dc * 1e-3)
 
