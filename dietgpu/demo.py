@@ -82,7 +82,7 @@ def calc_comp_ratio(input_ts, out_sizes):
         total_input_size += t.numel() * t.element_size()
         total_comp_size += s
 
-    return total_input_size, total_comp_size, total_comp_size / total_input_size
+    return total_input_size, total_comp_size,  total_input_size / total_comp_size
 
 
 def get_float_comp_timings(ts, num_runs=3):
@@ -240,7 +240,29 @@ def decompress_tensor(load_path, type, dev):
     
     return decompressed_tensor, ts
 
+def compress_to_disk_float(ts, save_path, outputname, batch_size):
+    tempMem = torch.empty([500 * 500 * 100 * 6], dtype=torch.uint8, device=dev)
 
+    #do batch
+    print('ts.shape = ' + str(ts.shape) + ' ts.shape = ' + str(ts.shape[0]))
+    sub_tensor_length = -(- ts.shape[0] // batch_size) ## another way to ceil
+    print('sub_tensor_length = ' + str(sub_tensor_length))
+    ts = list(torch.split(ts, sub_tensor_length))
+
+    #any compress
+    rows, cols = torch.ops.dietgpu.max_float_compressed_output_size(ts)
+    print('rows = {} cols = {}' .format(rows, cols))
+    comp = torch.empty([rows, cols], dtype=torch.uint8, device=dev)
+    sizes = torch.zeros([len(ts)], dtype=torch.int, device=dev)
+    # print('len(ts[0]) = ', len(ts[0]))
+    print('max_float_compressed_output_size:  comp.shape = {} , max_comp_size / ts_size = ratio = {}' .format(comp.shape, (comp.element_size() * comp.numel()) / (ts[0].element_size() * ts[0].numel() * len(ts))))
+    comp, sizes, memUsed = torch.ops.dietgpu.compress_data(
+        True, ts, False, tempMem, comp, sizes)
+    total_size, comp_size, comp_ratio = calc_comp_ratio(ts, sizes)
+    print('ts[0].size = {}, ts[0].element_size() = {}' .format(ts[0].size(), ts[0].element_size()))
+    print('float compression {} -> {} bytes ({:.4f}x)' .format(total_size, comp_size, comp_ratio))
+    compress_tensor(ts, comp, sizes=sizes, save_path=save_path, outputname=outputname)
+    return rows, cols, [len(ts), ts[0].shape[0]]
 
 def compress_to_disk_any(ts, save_path, outputname, batch_size):
     tempMem = torch.empty([500 * 500 * 100 * 6], dtype=torch.uint8, device=dev)
@@ -286,6 +308,29 @@ def decompress_from_disk_any(load_path, rows, cols, original_shape, dtype, devic
     out_sizes = torch.empty([original_shape[0]], dtype=torch.int32, device=dev)
     torch.ops.dietgpu.decompress_data(
         False, comp_ts, out_ts, True, tempMem, out_status, out_sizes
+    )
+    return torch.cat(out_ts, dim=0)
+
+def decompress_from_disk_float(load_path, rows, cols, original_shape, dtype, device):
+    tempMem = torch.empty([500 * 500 * 100 * 6], dtype=torch.uint8, device=device)
+
+    files = sorted([f for f in os.listdir(load_path) if f.endswith('.pth')])
+    print('files = ', files)
+    decompressed_tensor = torch.zeros([rows, cols], dtype=torch.uint8, device=device)
+    for idx, file in enumerate(files):
+        with open(os.path.join(load_path, file), 'rb') as f:
+            data = torch.tensor(bytearray(f.read()), dtype=torch.uint8, device=device)
+            decompressed_tensor[idx, :data.shape[0]] = data
+    print(decompressed_tensor.shape)
+
+    out_ts = []
+    comp_ts = [*decompressed_tensor]
+    for i in range(original_shape[0]):
+        out_ts.append(torch.empty(original_shape[1], dtype=dtype, device=device))
+    out_status = torch.empty([original_shape[0]], dtype=torch.uint8, device=dev)
+    out_sizes = torch.empty([original_shape[0]], dtype=torch.int32, device=dev)
+    torch.ops.dietgpu.decompress_data(
+        True, comp_ts, out_ts, False, tempMem, out_status, out_sizes
     )
     return torch.cat(out_ts, dim=0)
 
@@ -480,13 +525,29 @@ def validation_test():
     '''
     this function is used to test if output data is the same with original data
     '''
-    relative_path = '../../../Compressor/data_float16/'
-    readtype = torch.float16
+    relative_path = '../../../Compressor/data_float32/'
+    readtype = torch.float32
     files = ['cesm-CLDHGH-3600x1800', 'exafel-59200x388', 'hurr-CLOUDf48-500x500x100']
+
+    print('----------------------start validate ANS codec--------------------\n')
+
+    #Test Raw Ans codec
     for i in range(len(files)):
         ts = read_data_to_tensor(filepath=relative_path+files[i], read_dtype=readtype, device = dev)
-        rows, cols, original_shape = compress_to_disk_any(ts=ts, save_path='output_data/'+ str(readtype).split('.')[-1]+'/' +files[i]+'/', outputname=files[i], batch_size=10)
-        out_ts = decompress_from_disk_any('output_data/'+ str(readtype).split('.')[-1]+'/' +files[i]+'/', rows= rows, cols=cols, original_shape=original_shape, dtype=readtype, device=dev )
+        rows, cols, original_shape = compress_to_disk_any(ts=ts, save_path='output_data/ansec/'+ str(readtype).split('.')[-1]+'/' +files[i]+'/', outputname=files[i], batch_size=10)
+        out_ts = decompress_from_disk_any('output_data/ansec/'+ str(readtype).split('.')[-1]+'/' +files[i]+'/', rows= rows, cols=cols, original_shape=original_shape, dtype=readtype, device=dev )
+        #start validate
+        are_equal = torch.equal(ts, out_ts)
+        # Check if the compressed data matches the original data
+        print("Compressed data same with original data\n" if are_equal else "Compressed data not same with original data\n")
+
+    print('----------------------start validate Float codec--------------------\n')
+
+    #Test Float codec
+    for i in range(len(files)):
+        ts = read_data_to_tensor(filepath=relative_path+files[i], read_dtype=readtype, device = dev)
+        rows, cols, original_shape = compress_to_disk_float(ts=ts, save_path='output_data/floatec/'+ str(readtype).split('.')[-1]+'/' +files[i]+'/', outputname=files[i], batch_size=10)
+        out_ts = decompress_from_disk_float('output_data/floatec/'+ str(readtype).split('.')[-1]+'/' +files[i]+'/', rows= rows, cols=cols, original_shape=original_shape, dtype=readtype, device=dev )
         #start validate
         are_equal = torch.equal(ts, out_ts)
         # Check if the compressed data matches the original data
