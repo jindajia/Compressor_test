@@ -242,7 +242,7 @@ def decompress_tensor(load_path, type, dev):
 
 
 
-def compress_to_disk_any(ts, save_path, outputname,batch_size):
+def compress_to_disk_any(ts, save_path, outputname, batch_size):
     tempMem = torch.empty([500 * 500 * 100 * 6], dtype=torch.uint8, device=dev)
 
     #do batch
@@ -250,33 +250,45 @@ def compress_to_disk_any(ts, save_path, outputname,batch_size):
     sub_tensor_length = -(- ts.shape[0] // batch_size) ## another way to ceil
     print('sub_tensor_length = ' + str(sub_tensor_length))
     ts = list(torch.split(ts, sub_tensor_length))
-    print('ts.len = ', len(ts))
 
     #any compress
     rows, cols = torch.ops.dietgpu.max_any_compressed_output_size(ts)
+    print('rows = {} cols = {}' .format(rows, cols))
     comp = torch.empty([rows, cols], dtype=torch.uint8, device=dev)
     sizes = torch.zeros([len(ts)], dtype=torch.int, device=dev)
     # print('len(ts[0]) = ', len(ts[0]))
-    print('max_any_compressed_output_size:  comp.shape = {} , max_comp_size / ts_size = ratio = {}' .format(comp.shape, (comp.element_size() * comp.numel()) / (ts[0].element_size() * ts[0].numel())))
+    print('max_any_compressed_output_size:  comp.shape = {} , max_comp_size / ts_size = ratio = {}' .format(comp.shape, (comp.element_size() * comp.numel()) / (ts[0].element_size() * ts[0].numel() * len(ts))))
     comp, sizes, memUsed = torch.ops.dietgpu.compress_data(
         False, ts, True, tempMem, comp, sizes)
     total_size, comp_size, comp_ratio = calc_comp_ratio(ts, sizes)
     print('ts[0].size = {}, ts[0].element_size() = {}' .format(ts[0].size(), ts[0].element_size()))
     print('any compression {} -> {} bytes ({:.4f}x)' .format(total_size, comp_size, comp_ratio))
     compress_tensor(ts, comp, sizes=sizes, save_path=save_path, outputname=outputname)
+    return rows, cols, [len(ts), ts[0].shape[0]]
 
-def decompress_from_disk_any(file, type, device = torch.device("cpu")):
-    tempMem = torch.empty([500 * 500 * 100 * 6], dtype=torch.uint8, device=dev)
+def decompress_from_disk_any(load_path, rows, cols, original_shape, dtype, device):
+    tempMem = torch.empty([500 * 500 * 100 * 6], dtype=torch.uint8, device=device)
 
-    comp_ts, out_ts = decompress_tensor(file, type, device)
+    files = sorted([f for f in os.listdir(load_path) if f.endswith('.pth')])
+    print('files = ', files)
+    decompressed_tensor = torch.zeros([rows, cols], dtype=torch.uint8, device=device)
+    for idx, file in enumerate(files):
+        with open(os.path.join(load_path, file), 'rb') as f:
+            data = torch.tensor(bytearray(f.read()), dtype=torch.uint8, device=device)
+            decompressed_tensor[idx, :data.shape[0]] = data
+    print(decompressed_tensor.shape)
+
     out_ts = []
-    out_status = torch.empty([len(out_ts)], dtype=torch.uint8, device=dev)
-    out_sizes = torch.empty([len(out_ts)], dtype=torch.int32, device=dev)
+    comp_ts = [*decompressed_tensor]
+    for i in range(original_shape[0]):
+        out_ts.append(torch.empty(original_shape[1], dtype=dtype, device=device))
+    out_status = torch.empty([original_shape[0]], dtype=torch.uint8, device=dev)
+    out_sizes = torch.empty([original_shape[0]], dtype=torch.int32, device=dev)
     torch.ops.dietgpu.decompress_data(
         False, comp_ts, out_ts, True, tempMem, out_status, out_sizes
     )
-    return out_ts
-    
+    return torch.cat(out_ts, dim=0)
+
 def main_test():
     abspath = '/ocean/projects/asc200010p/jjia1/Compressor/data_bfloat16/'
     files = ['cesm-CLDHGH-3600x1800', 'exafel-59200x388', 'hurr-CLOUDf48-500x500x100']
@@ -417,10 +429,10 @@ def small_test():
             )
             print("decomp time {:.3f} ms B/W {:.1f} GB/s\n".format(dc, dc_bw))
 
-def element_size(dt):
-    return torch.tensor([], dtype=dt).element_size()
-
 def test_comp(filepath, read_type):
+    '''
+    this function only test compression
+    '''
     tempMem = torch.empty([500 * 500 * 100 * 6], dtype=torch.uint8, device=dev)
     ts = []
     dt = read_type
@@ -433,7 +445,7 @@ def test_comp(filepath, read_type):
     comp = torch.empty([rows, cols], dtype=torch.uint8, device=dev)
     sizes = torch.zeros([len(ts)], dtype=torch.int, device=dev)
     # print('len(ts[0]) = ', len(ts[0]))
-    print('max_any_compressed_output_size:  comp.shape = {} , max_comp_size / ts_size = ratio = {}' .format(comp.shape, (comp.element_size() * comp.numel()) / (ts[0].element_size() * ts[0].numel())))
+    print('max_any_compressed_output_size:  comp.shape = {} , max_comp_size / ts_size = ratio = {}' .format(comp.shape, (comp.element_size() * comp.numel()) / (ts[0].element_size() * ts[0].numel() * len(ts))))
     comp, sizes, memUsed = torch.ops.dietgpu.compress_data(
         False, ts, True, tempMem, comp, sizes)
     total_size, comp_size, comp_ratio = calc_comp_ratio(ts, sizes)
@@ -455,24 +467,35 @@ def test_comp(filepath, read_type):
     print('float compression {} -> {} bytes ({:.4f}x)' .format(total_size, comp_size, comp_ratio))
 
 def convert_datas():
+    '''
+    This is a utilities function, it help me to conver a set of data to another type
+    '''
     relative_path = '../../../Compressor/data_float32/'
     ouput_relative_path = '../../../Compressor/data_float16/'
     files = ['cesm-CLDHGH-3600x1800', 'exafel-59200x388', 'hurr-CLOUDf48-500x500x100']
     for i in range(len(files)):
         convert_data(relative_path+files[i], torch.float32, ouput_relative_path+files[i], torch.float16)
 
-def single_test():
+def validation_test():
+    '''
+    this function is used to test if output data is the same with original data
+    '''
     relative_path = '../../../Compressor/data_float16/'
     readtype = torch.float16
     files = ['cesm-CLDHGH-3600x1800', 'exafel-59200x388', 'hurr-CLOUDf48-500x500x100']
-    for i in range(2, len(files)):
-        ts = read_data_to_tensor(filepath=relative_path+files[i], read_dtype=torch.float32, device = dev)
-        compress_to_disk_any(ts=ts, save_path='output_data/'+ str(readtype).split('.')[-1]+'/' +files[i]+'/', outputname=files[i], batch_size=10)
+    for i in range(len(files)):
+        ts = read_data_to_tensor(filepath=relative_path+files[i], read_dtype=readtype, device = dev)
+        rows, cols, original_shape = compress_to_disk_any(ts=ts, save_path='output_data/'+ str(readtype).split('.')[-1]+'/' +files[i]+'/', outputname=files[i], batch_size=10)
+        out_ts = decompress_from_disk_any('output_data/'+ str(readtype).split('.')[-1]+'/' +files[i]+'/', rows= rows, cols=cols, original_shape=original_shape, dtype=readtype, device=dev )
+        #start validate
+        are_equal = torch.equal(ts, out_ts)
+        # Check if the compressed data matches the original data
+        print("Compressed data same with original data\n" if are_equal else "Compressed data not same with original data\n")
 
 if __name__ == "__main__":
     # test_comp('/ocean/projects/asc200010p/jjia1/Compressor/data_float32/hurr-CLOUDf48-500x500x100', torch.float32)
     # small_test()
     # main_test()
     # convert_datas()
-    single_test()
+    validation_test()
 
